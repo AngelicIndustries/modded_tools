@@ -104,3 +104,105 @@ select_java_task_suffix() {
             ;;
     esac
 }
+
+recover_hyprland_environment() {
+    local user_id default_runtime_dir runtime_dir hypr_root
+    local instance_dir candidate lock_file wayland_display
+    local x11_socket x11_name
+
+    user_id="$(id -u)"
+    default_runtime_dir="/run/user/${user_id}"
+    runtime_dir="${XDG_RUNTIME_DIR:-$default_runtime_dir}"
+
+    # Agent/IDE terminals can carry an unrelated XDG_RUNTIME_DIR. Prefer the
+    # current user's runtime directory when that is where Hyprland is running.
+    if [ ! -d "$runtime_dir/hypr" ] && [ -d "$default_runtime_dir/hypr" ]; then
+        runtime_dir="$default_runtime_dir"
+    fi
+
+    hypr_root="$runtime_dir/hypr"
+    [ -d "$hypr_root" ] || return 1
+    export XDG_RUNTIME_DIR="$runtime_dir"
+
+    instance_dir=""
+    if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+        candidate="$hypr_root/$HYPRLAND_INSTANCE_SIGNATURE"
+        if [ -S "$candidate/.socket.sock" ] && [ -r "$candidate/hyprland.lock" ]; then
+            instance_dir="$candidate"
+        fi
+    fi
+
+    # When no usable signature was inherited, select the newest live-looking
+    # instance. Hyprland removes these sockets when an instance exits normally.
+    if [ -z "$instance_dir" ]; then
+        for candidate in "$hypr_root"/*; do
+            [ -d "$candidate" ] || continue
+            [ -S "$candidate/.socket.sock" ] || continue
+            [ -r "$candidate/hyprland.lock" ] || continue
+
+            if [ -z "$instance_dir" ] ||
+                [ "$candidate/hyprland.lock" -nt "$instance_dir/hyprland.lock" ]; then
+                instance_dir="$candidate"
+            fi
+        done
+    fi
+
+    [ -n "$instance_dir" ] || return 1
+    export HYPRLAND_INSTANCE_SIGNATURE="${instance_dir##*/}"
+
+    lock_file="$instance_dir/hyprland.lock"
+    wayland_display="$(sed -n '2{s/\r$//;p;}' "$lock_file")"
+    if [[ "$wayland_display" =~ ^wayland-[0-9]+$ ]] &&
+        [ -S "$runtime_dir/$wayland_display" ]; then
+        export WAYLAND_DISPLAY="$wayland_display"
+    elif [[ "${WAYLAND_DISPLAY:-}" =~ ^wayland-[0-9]+$ ]] &&
+        [ -S "$runtime_dir/$WAYLAND_DISPLAY" ]; then
+        wayland_display="$WAYLAND_DISPLAY"
+    else
+        wayland_display=""
+        for candidate in "$runtime_dir"/wayland-*; do
+            [ -S "$candidate" ] || continue
+            [[ "${candidate##*/}" =~ ^wayland-[0-9]+$ ]] || continue
+
+            if [ -z "$wayland_display" ] ||
+                [ "$candidate" -nt "$runtime_dir/$wayland_display" ]; then
+                wayland_display="${candidate##*/}"
+            fi
+        done
+
+        [ -n "$wayland_display" ] || return 1
+        export WAYLAND_DISPLAY="$wayland_display"
+    fi
+
+    # Legacy Minecraft/LWJGL clients still open through Xwayland.
+    if [ -z "${DISPLAY:-}" ]; then
+        x11_socket=""
+        for candidate in /tmp/.X11-unix/X*; do
+            [ -S "$candidate" ] || continue
+            x11_name="${candidate##*/}"
+            [[ "$x11_name" =~ ^X[0-9]+$ ]] || continue
+
+            if [ -z "$x11_socket" ] || [ "$candidate" -nt "$x11_socket" ]; then
+                x11_socket="$candidate"
+            fi
+        done
+
+        if [ -n "$x11_socket" ]; then
+            x11_name="${x11_socket##*/}"
+            export DISPLAY=":${x11_name#X}"
+        fi
+    fi
+
+    if [ -z "${XAUTHORITY:-}" ] && [ -n "${HOME:-}" ] && [ -r "$HOME/.Xauthority" ]; then
+        export XAUTHORITY="$HOME/.Xauthority"
+    fi
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "$runtime_dir/bus" ]; then
+        export DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus"
+    fi
+
+    export XDG_SESSION_TYPE="wayland"
+    export XDG_CURRENT_DESKTOP="Hyprland"
+    export XDG_SESSION_DESKTOP="Hyprland"
+    export DESKTOP_SESSION="Hyprland"
+    export _JAVA_AWT_WM_NONREPARENTING=1
+}

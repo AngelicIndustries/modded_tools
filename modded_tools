@@ -9,6 +9,15 @@ done
 
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
+# Remember where this launcher was invoked. If "Run Client" is selected, the
+# value is inherited by Minecraft so Hyprland can place its window beside the
+# terminal that launched it, even if another workspace is active by then.
+launch_workspace=''
+if command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  launch_workspace=$(hyprctl --instance 0 activeworkspace -j 2>/dev/null |
+    jq -r 'if .id > 0 then .id else empty end' 2>/dev/null || true)
+fi
+
 source "$SCRIPT_DIR/bin/common.sh"
 source "$SCRIPT_DIR/venv/bin/activate"
 
@@ -56,5 +65,9 @@ options=(
 
 select_option "${options[@]}"
 choice=$?
+
+if [[ $choice -eq 1 && $launch_workspace =~ ^[0-9]+$ ]]; then
+  export MODDED_TOOLS_WORKSPACE="$launch_workspace"
+fi
 
 ${scripts[$choice]}

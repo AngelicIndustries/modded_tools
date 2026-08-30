@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import re
+import socket
 import sys
 import urllib.error
 import urllib.request
@@ -43,7 +45,7 @@ except ImportError:
         return root
 
     ET.fromstring = _fromstring_fallback  # type: ignore[assignment]
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 
 DEFAULT_MAVEN_BASES = [
@@ -68,7 +70,6 @@ PROJECT_REPOSITORY_FILES = [
 
 COORD_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.+\-]+$")
 PRE_SUFFIX_RE = re.compile(r"(?i)(?:^|[._-])pre$")
-BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 REPOSITORY_URL_PATTERNS = [
     re.compile(r"""\burl\s*=\s*(?:uri\s*\(\s*)?["']([^"']+)["']\s*\)?"""),
     re.compile(r"""\burl\s+(?:uri\s*\(\s*)?["']([^"']+)["']\s*\)?"""),
@@ -225,10 +226,64 @@ def normalize_repository_url(url: str) -> Optional[str]:
     return normalized
 
 
+def mask_gradle_comments(content: str) -> str:
+    """Replace comments with spaces while preserving offsets and line breaks."""
+    masked = list(content)
+    index = 0
+    quote: Optional[str] = None
+    escaped = False
+
+    while index < len(content):
+        char = content[index]
+
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            elif char in "\r\n":
+                # Gradle's ordinary single- and double-quoted strings do not
+                # continue across lines. Keep malformed input from hiding the
+                # remainder of the file from the scanner.
+                quote = None
+            index += 1
+            continue
+
+        if char in ("'", '"'):
+            quote = char
+            index += 1
+            continue
+
+        if content.startswith("//", index):
+            while index < len(content) and content[index] not in "\r\n":
+                masked[index] = " "
+                index += 1
+            continue
+
+        if content.startswith("/*", index):
+            masked[index] = " "
+            masked[index + 1] = " "
+            index += 2
+            while index < len(content):
+                if content.startswith("*/", index):
+                    masked[index] = " "
+                    masked[index + 1] = " "
+                    index += 2
+                    break
+                if content[index] not in "\r\n":
+                    masked[index] = " "
+                index += 1
+            continue
+
+        index += 1
+
+    return "".join(masked)
+
+
 def strip_gradle_comments(content: str) -> str:
-    without_block_comments = BLOCK_COMMENT_RE.sub("", content)
-    lines = [line[: find_comment_start(line)] for line in without_block_comments.splitlines()]
-    return "\n".join(lines)
+    return mask_gradle_comments(content)
 
 
 def extract_maven_repository_urls(content: str) -> List[str]:
@@ -289,6 +344,29 @@ def metadata_urls(group: str, artifact: str, extra_repos: Optional[List[str]] = 
     return [f"{base.rstrip('/')}/{group_path}/{artifact}/maven-metadata.xml" for base in all_bases]
 
 
+def ipv4_first_address_info(addresses: List[tuple]) -> List[tuple]:
+    """Keep resolver order within each family, but try IPv4 before IPv6."""
+    return sorted(addresses, key=lambda address: address[0] != socket.AF_INET)
+
+
+@contextmanager
+def prefer_ipv4_resolution():
+    """Make urllib avoid long IPv6 failures while retaining IPv6 fallback."""
+    system_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo_ipv4_first(*args, **kwargs):
+        return ipv4_first_address_info(system_getaddrinfo(*args, **kwargs))
+
+    # urllib ultimately resolves through socket.create_connection. The scan is
+    # single-threaded, so this tightly scoped override cannot affect another
+    # request in this process.
+    socket.getaddrinfo = getaddrinfo_ipv4_first
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = system_getaddrinfo
+
+
 def fetch_latest_from_metadata(urls: List[str], timeout_seconds: float) -> Tuple[Optional[str], Optional[str], List[str]]:
     headers = {"User-Agent": "ModdedTools-DependencyChecker/1.0"}
     last_versions: List[str] = []
@@ -296,11 +374,12 @@ def fetch_latest_from_metadata(urls: List[str], timeout_seconds: float) -> Tuple
     for url in urls:
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                status = getattr(response, "status", None)
-                if status is not None and (status < 200 or status >= 300):
-                    continue
-                data = response.read()
+            with prefer_ipv4_resolution():
+                with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                    status = getattr(response, "status", None)
+                    if status is not None and (status < 200 or status >= 300):
+                        continue
+                    data = response.read()
         except (urllib.error.URLError, TimeoutError, OSError):
             continue
 
@@ -336,14 +415,18 @@ def compare_with_known_order(current: str, candidate: str, versions: List[str]) 
     return -1
 
 
-def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, object]:
+def scan_dependencies(
+    deps_file: str,
+    timeout_seconds: float,
+    progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+) -> Dict[str, object]:
     with open(deps_file, "r", encoding="utf-8") as handle:
         content = handle.read()
 
     extra_repos = unique_in_order(
         environment_extra_maven_repositories() + discover_project_maven_repositories(deps_file)
     )
-    lines = content.splitlines(keepends=True)
+    lines = mask_gradle_comments(content).splitlines(keepends=True)
     offset = 0
 
     grouped: Dict[Tuple[str, str, str, Tuple[str, ...]], Dict[str, object]] = {}
@@ -384,7 +467,8 @@ def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, objec
     candidates: List[Dict[str, object]] = []
     next_id = 0
 
-    for key in ordered_keys:
+    total_dependencies = len(ordered_keys)
+    for dependency_index, key in enumerate(ordered_keys, start=1):
         entry = grouped[key]
         group = entry["group"]
         artifact = entry["artifact"]
@@ -392,6 +476,14 @@ def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, objec
         extras: List[str] = entry["extras"]
         cache_key = (group, artifact)
         is_best_effort = group in {"curse.maven", "maven.modrinth"}
+
+        if progress_callback is not None:
+            progress_callback(
+                dependency_index,
+                total_dependencies,
+                f"{group}:{artifact}",
+                current_version,
+            )
 
         if cache_key not in cache:
             urls = metadata_urls(group, artifact, extra_repos)
@@ -427,7 +519,18 @@ def scan_dependencies(deps_file: str, timeout_seconds: float) -> Dict[str, objec
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    state = scan_dependencies(args.deps_file, args.timeout)
+    def report_progress(index: int, total: int, dependency: str, version: str) -> None:
+        print(
+            f"Checking [{index}/{total}] {dependency}:{version}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    state = scan_dependencies(
+        args.deps_file,
+        args.timeout,
+        progress_callback=report_progress,
+    )
     with open(args.state_file, "w", encoding="utf-8") as handle:
         json.dump(state, handle, indent=2)
 

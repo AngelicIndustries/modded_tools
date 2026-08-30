@@ -1,4 +1,5 @@
 import importlib.util
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +30,21 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
         )
 
         self.assertEqual(candidate, "2.2.9-GTNH")
+
+    def test_ipv4_addresses_are_tried_before_ipv6(self) -> None:
+        ipv6_first = [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::1", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.1", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2001:db8::2", 443, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.2", 443)),
+        ]
+
+        sorted_addresses = checker.ipv4_first_address_info(ipv6_first)
+
+        self.assertEqual(
+            [address[4][0] for address in sorted_addresses],
+            ["192.0.2.1", "192.0.2.2", "2001:db8::1", "2001:db8::2"],
+        )
 
     def test_scan_dependencies_does_not_downgrade_current_pre_version(self) -> None:
         deps_file = self.write_temp_deps(
@@ -66,6 +82,67 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
 
         self.assertEqual(len(state["candidates"]), 1)
         self.assertEqual(state["candidates"][0]["latest_version"], "2.2.9-GTNH")
+
+    def test_scan_dependencies_ignores_commented_coordinates(self) -> None:
+        deps_file = self.write_temp_deps(
+            """
+            /*
+             * implementation("example.group:example-artifact:1.0.0")
+             */
+            // implementation("line.comment:ignored:1.0.0")
+            implementation("real.group:real-artifact:1.0.0")
+            """
+        )
+        checked_urls = []
+
+        def fetch_latest(urls, timeout_seconds):
+            checked_urls.extend(urls)
+            return (
+                "2.0.0",
+                "https://example.invalid/maven-metadata.xml",
+                ["1.0.0", "2.0.0"],
+            )
+
+        with mock.patch.object(checker, "fetch_latest_from_metadata", side_effect=fetch_latest):
+            state = checker.scan_dependencies(deps_file, timeout_seconds=0.01)
+
+        self.assertEqual(len(state["candidates"]), 1)
+        self.assertEqual(state["candidates"][0]["group"], "real.group")
+        occurrence = state["candidates"][0]["occurrences"][0]
+        self.assertEqual(
+            state["content"][occurrence["start"] : occurrence["end"]],
+            "real.group:real-artifact:1.0.0",
+        )
+        self.assertTrue(all("example/group" not in url for url in checked_urls))
+        self.assertTrue(all("line/comment" not in url for url in checked_urls))
+
+    def test_scan_dependencies_reports_progress(self) -> None:
+        deps_file = self.write_temp_deps(
+            'implementation("real.group:first:1.0.0")\n'
+            'implementation("real.group:second:1.0.0")\n'
+        )
+        progress = []
+
+        with mock.patch.object(
+            checker,
+            "fetch_latest_from_metadata",
+            return_value=(None, None, []),
+        ):
+            checker.scan_dependencies(
+                deps_file,
+                timeout_seconds=0.01,
+                progress_callback=lambda index, total, dependency, version: progress.append(
+                    (index, total, dependency, version)
+                ),
+            )
+
+        self.assertEqual(
+            progress,
+            [
+                (1, 2, "real.group:first", "1.0.0"),
+                (2, 2, "real.group:second", "1.0.0"),
+            ],
+        )
 
     def test_extract_maven_repository_urls_supports_common_gradle_forms(self) -> None:
         urls = checker.extract_maven_repository_urls(

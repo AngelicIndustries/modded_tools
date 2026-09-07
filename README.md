@@ -56,3 +56,38 @@ updates remain applied; rerun the entry after fixing the error.
 ## Configuration
 
 All credentials and settings go in `.env`. See `.env.example` for available options.
+
+## Deobfuscate a Minecraft 1.7.10 mod
+
+```sh
+./modded_tools --deobf /path/to/mod-1.7.10.jar
+# Creates /path/to/mod-1.7.10-dev.jar
+./modded_tools --deobf /path/to/mod.jar --output /tmp/mod-dev.jar
+./modded_tools --deobf --help
+```
+
+This command runs directly, without opening the menu. It requires Python 3.10+
+and a JDK (Java 8+), using `JAVA_HOME` when set or `java`/`javac` from `PATH`.
+It does not require a mod checkout, Gradle, the Python virtual environment or `.env`.
+The input must be a compiled Forge 1.7.10 mod using SRG names (`func_*` / `field_*`).
+The output is an MCP-mapped binary development dependency, not decompiled source;
+use the original JAR in a regular game installation.
+
+The helper invokes RetroFuturaGradle 1.4.9's own `SimpleSrgRemapper` and bundled ASM,
+following its [dependency deobfuscation transform](https://github.com/GTNewHorizons/RetroFuturaGradle/blob/1.4.9/plugin/src/main/java/com/gtnewhorizons/retrofuturagradle/modutils/DependencyDeobfuscationTransform.java).
+It uses the method/field CSVs embedded in Forge 1.7.10 build 1614, RFG's default
+for this Minecraft version. RFG 1.4.9 keeps the standalone helper compatible with
+Java 8+. Classes and their member references are remapped, resources are preserved,
+and invalidated JAR signatures and manifest digests are removed.
+
+Dependencies are pinned with SHA-256 checks and cached in `cache/deobf-1.7.10/`;
+verified artifacts already in Gradle's cache are reused. Forge's Maven is tried
+first, with the Fent Maven mirror as fallback. Subsequent runs work offline.
+Use `--cache-dir DIR` to change the cache location or `--mappings-dir DIR` to use
+your project's `methods.csv` and `fields.csv` (for example, when it disables RFG's
+Forge embedded mappings). `--deobf-1.7.10` is an alias for `--deobf`.
+
+The default `-dev.jar` suffix matches the Maven `dev` classifier used by RFG's
+published development JARs. RFG's internal dependency transform instead names its
+temporary output `-deobf.jar`. The original file is preserved; replacing an existing
+output requires `--force`. This command only creates the local development JAR.

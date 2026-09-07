@@ -9,6 +9,26 @@ done
 
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
+# Non-interactive commands must run before desktop probing, venv setup or menus.
+if (( $# )); then
+  case "$1" in
+    --deobf|--deobf-1.7.10)
+      shift
+      exec python3 "$SCRIPT_DIR/bin/deobfuscate_mod.py" "$@"
+      ;;
+    -h|--help)
+      echo "Usage: modded_tools [--deobf JAR [-o OUTPUT] [--mappings-dir DIR] [--force]]"
+      echo "Without arguments, open the interactive menu."
+      echo "Use --deobf --help for Minecraft 1.7.10 deobfuscation options."
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1 (use --help)" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 # Remember where this launcher was invoked. If "Run Client" is selected, the
 # value is inherited by Minecraft so Hyprland can place its window beside the
 # terminal that launched it, even if another workspace is active by then.

@@ -42,6 +42,7 @@ scripts=(
     "$SCRIPT_DIR/bin/update_buildscript.sh"
     "$SCRIPT_DIR/bin/check_dependency_updates.sh"
     "$SCRIPT_DIR/bin/setup_github_credentials.sh"
+    "$SCRIPT_DIR/bin/deploy_github_secrets.py"
     "$SCRIPT_DIR/bin/deploy_to_server.sh"
     "$SCRIPT_DIR/bin/deploy_to_local.sh"
 )
@@ -59,6 +60,7 @@ options=(
     "Update Buildscript"
     "Check Dependencies For Updates"
     "Setup GitHub Credentials (Folder)"
+    "Deploy GitHub Secrets + Variables"
     "Deploy To Server"
     "Deploy To Local"
 )

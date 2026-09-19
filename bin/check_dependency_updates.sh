@@ -74,12 +74,15 @@ for line in "${scan_lines[@]}"; do
     [[ "$line" == CANDIDATE\|* ]] || continue
     found_candidates=1
 
-    IFS='|' read -r _ candidate_id ga current_version latest_version occurrence_count best_effort compatibility <<< "$line"
+    IFS='|' read -r _ candidate_id ga current_version latest_version occurrence_count best_effort compatibility classifier_change <<< "$line"
     echo
     echo -e "${CYAN}${ga}${NC}"
     echo "Current: $current_version"
     echo "Latest:  $latest_version"
     echo "Occurrences in file: $occurrence_count"
+    if [ -n "$classifier_change" ]; then
+        echo "Classifier: $classifier_change"
+    fi
     if [ -n "$compatibility" ]; then
         echo "Compatibility: $compatibility (Modrinth API)"
     fi

@@ -30,6 +30,17 @@ Modrinth version IDs and Maven filter suffixes such as `1.0-forge,1.7.10` are
 supported. If a proposed version number is shared by multiple files, the update
 uses its unique version ID to avoid resolving the wrong loader in Maven.
 
+For dependencies resolved through `https://maven.fentanylsolutions.org/github/`,
+the checker migrates filename classifiers of the form `<artifact>-<current version>-dev`,
+`-sources`, or `-javadoc` to the corresponding stable selector. Matching is case
+insensitive and an optional `.jar` suffix is supported. Existing `dev`, `sources`,
+and `javadoc` selectors are preserved. For example,
+`jss2a98aj:BugTorch:1.2.15:bugtorch-1.2.15-dev` becomes
+`jss2a98aj:BugTorch:1.3.1:dev`. The proposed JAR is checked through the repository,
+following redirects and checking its ZIP header, both before offering the update
+and immediately before applying it. Unrecognized or ambiguous classifiers and
+failed artifact checks are skipped with an explanation.
+
 Run Client also has a `Cached Gradle config (offline)` mode. It passes
 `--offline --configuration-cache`, avoiding network checks for remote Gradle scripts and dependencies
 that are already cached. The mode fails if the build needs an artifact that has not been cached yet.

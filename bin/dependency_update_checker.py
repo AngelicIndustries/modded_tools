@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 from datetime import datetime
+import http.client
 import json
 import os
 import re
@@ -62,6 +63,8 @@ CURSE_MAVEN_BASES = [
 ]
 
 MODRINTH_API = "https://api.modrinth.com/v2"
+FENT_GITHUB_MAVEN_BASE = "https://maven.fentanylsolutions.org/github/"
+GITHUB_STABLE_CLASSIFIERS = ("dev", "sources", "javadoc")
 
 PROJECT_REPOSITORY_FILES = [
     "repositories.gradle",
@@ -414,6 +417,60 @@ def compare_with_known_order(current: str, candidate: str, versions: List[str]) 
     return -1
 
 
+def is_fent_github_source(source_url: Optional[str]) -> bool:
+    return bool(source_url and source_url.startswith(FENT_GITHUB_MAVEN_BASE))
+
+
+def stable_github_classifiers(artifact: str, current: str, extras: List[str]) -> List[str]:
+    if not extras or (len(extras) == 1 and extras[0] in GITHUB_STABLE_CLASSIFIERS):
+        return extras[:]
+    if len(extras) != 1:
+        raise ValueError("ambiguous classifier: expected at most one JAR selector")
+    # Only a full artifact/version filename is recognized. A suffix alone could
+    # select a different variant (for example mod-client-1.0-dev).
+    match = re.fullmatch(
+        re.escape(artifact) + "-" + re.escape(current) + r"-(dev|sources|javadoc)(?:\.jar)?",
+        extras[0], re.IGNORECASE,
+    )
+    if not match:
+        raise ValueError(f"unrecognized or ambiguous filename classifier '{extras[0]}'; choose dev, sources, or javadoc explicitly")
+    return [match.group(1).lower()]
+
+
+def github_artifact_url(source_url: str, group: str, artifact: str, version: str, extras: List[str]) -> str:
+    if len(extras) > 1 or not all(COORD_TOKEN_RE.fullmatch(v) for v in [group, artifact, version, *extras]):
+        raise ValueError("unsupported GitHub Maven artifact coordinate")
+    directory = FENT_GITHUB_MAVEN_BASE + group.replace(".", "/") + "/" + artifact + "/"
+    if source_url != directory + "maven-metadata.xml":
+        raise ValueError("GitHub Maven metadata source does not match the dependency")
+    classifier = "-" + extras[0] if extras else ""
+    return f"{directory}{version}/{artifact}-{version}{classifier}.jar"
+
+
+def verify_github_artifact(url: str, timeout_seconds: float) -> None:
+    # Follow the repository's redirects all the way to the asset. A small GET
+    # verifies actual JAR bytes, including on servers without HEAD support.
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "ModdedTools-DependencyChecker/1.0", "Range": "bytes=0-3",
+    })
+    try:
+        with prefer_ipv4_resolution():
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                if response.status not in (200, 206):
+                    raise ValueError(f"artifact verification returned HTTP {response.status}")
+                if response.read(4) != b"PK\x03\x04":
+                    raise ValueError("artifact verification did not return a JAR (ZIP header missing)")
+    except urllib.error.HTTPError as error:
+        if error.code == 409:
+            reason = "ambiguous artifact selection (HTTP 409)"
+        else:
+            reason = f"artifact verification failed (HTTP {error.code})"
+        error.close()
+        raise ValueError(reason) from error
+    except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
+        raise ValueError("artifact verification failed (network error or timeout)") from error
+
+
 def project_minecraft_version(deps_file: str) -> Optional[str]:
     properties = os.path.join(os.path.dirname(os.path.abspath(deps_file)), "gradle.properties")
     try:
@@ -621,6 +678,20 @@ def scan_dependencies(
             if not latest_version or compare_with_known_order(current_version, latest_version, versions) <= 0:
                 continue
 
+        github_info = {}
+        if is_fent_github_source(source_url):
+            try:
+                new_extras = stable_github_classifiers(artifact, current_version, extras)
+                artifact_url = github_artifact_url(source_url, group, artifact, latest_version, new_extras)
+                verify_github_artifact(artifact_url, timeout_seconds)
+            except ValueError as error:
+                coordinate = ":".join([group, artifact, current_version, *extras])
+                print(f"Skipping {coordinate}: {error}.", file=sys.stderr)
+                continue
+            if new_extras != extras:
+                github_info["classifier_change"] = f"{':'.join(extras)} -> {':'.join(new_extras)}"
+            extras = new_extras
+
         new_parts = [group, artifact, latest_version, *extras]
         new_literal = ":".join(new_parts)
 
@@ -636,11 +707,12 @@ def scan_dependencies(
                 "new_literal": new_literal,
                 "occurrences": entry["occurrences"],
                 **modrinth_info,
+                **github_info,
             }
         )
         next_id += 1
 
-    return {"deps_file": deps_file, "content": content, "candidates": candidates}
+    return {"deps_file": deps_file, "content": content, "candidates": candidates, "timeout_seconds": timeout_seconds}
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -674,7 +746,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         # Version labels come from remote metadata; keep the line protocol intact.
         latest = latest.replace("|", "/").replace("\n", " ").replace("\r", " ")
         print(
-            "CANDIDATE|{id}|{key}|{current}|{latest}|{count}|{best_effort}|{compatibility}".format(
+            "CANDIDATE|{id}|{key}|{current}|{latest}|{count}|{best_effort}|{compatibility}|{classifier_change}".format(
                 id=candidate["id"],
                 key=key,
                 current=candidate["current_version"],
@@ -682,6 +754,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
                 count=occurrence_count,
                 best_effort="1" if candidate.get("best_effort") else "0",
                 compatibility=candidate.get("compatibility", ""),
+                classifier_change=candidate.get("classifier_change", ""),
             )
         )
     return 0
@@ -716,8 +789,19 @@ def cmd_apply(args: argparse.Namespace) -> int:
         candidate_id = candidate.get("id")
         if candidate_id not in selected_ids:
             continue
-        selected_candidates += 1
         new_literal = candidate["new_literal"]
+        if is_fent_github_source(candidate.get("source_url")):
+            try:
+                parsed = parse_coordinate(new_literal)
+                if parsed is None:
+                    raise ValueError("invalid proposed artifact coordinate")
+                group, artifact, version, extras = parsed
+                url = github_artifact_url(candidate["source_url"], group, artifact, version, list(extras))
+                verify_github_artifact(url, state.get("timeout_seconds", 8.0))
+            except ValueError as error:
+                print(f"Skipping {new_literal}: {error}.", file=sys.stderr)
+                continue
+        selected_candidates += 1
         for occurrence in candidate["occurrences"]:
             replacements.append((occurrence["start"], occurrence["end"], new_literal))
             selected_occurrences += 1

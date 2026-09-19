@@ -41,6 +41,7 @@ fi
 
 GRADLE_OPTIONS=()
 GRADLE_ARGS=()
+CLIENT_JVM_ARGS=()
 
 if $use_cached_gradle_config; then
     GRADLE_OPTIONS+=(--offline --configuration-cache)
@@ -63,12 +64,21 @@ if $enable_debug; then
         DEBUG_PORT=${DEBUG_PORT:-$DEFAULT_DEBUG_PORT}
     fi
 
-    GRADLE_ARGS+=(--mcJvmArgs="-agentlib:jdwp=transport=dt_socket,server=y,suspend=${DEBUG_SUSPEND},address=*:${DEBUG_PORT}")
+    CLIENT_JVM_ARGS+=("-agentlib:jdwp=transport=dt_socket,server=y,suspend=${DEBUG_SUSPEND},address=*:${DEBUG_PORT}")
     echo -e "${YELLOW}Client debug enabled on port ${DEBUG_PORT} (suspend=${DEBUG_SUSPEND})${NC}"
 fi
 
 if recover_hyprland_environment; then
     echo -e "${GREEN}Using Hyprland session ${HYPRLAND_INSTANCE_SIGNATURE} (${WAYLAND_DISPLAY}, DISPLAY=${DISPLAY:-unset})${NC}"
+fi
+
+awt_arg="$(client_awt_wayland_arg "$java_suffix")"
+if [ -n "$awt_arg" ]; then
+    CLIENT_JVM_ARGS+=("$awt_arg")
+    echo -e "${YELLOW}X11 is unavailable; using native Wayland for Swing windows (requires JetBrains Java 21/25).${NC}"
+fi
+if [ "${#CLIENT_JVM_ARGS[@]}" -gt 0 ]; then
+    GRADLE_ARGS+=(--mcJvmArgs="${CLIENT_JVM_ARGS[*]}")
 fi
 
 echo -e "${CYAN}Launching client...${NC}"

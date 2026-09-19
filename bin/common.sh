@@ -105,6 +105,36 @@ select_java_task_suffix() {
     esac
 }
 
+client_awt_wayland_arg() {
+    # JetBrains Java 21/25 can run Swing directly on Wayland. This avoids
+    # dependency-loader crashes when a terminal inherits an unusable DISPLAY.
+    case "${1:-}" in 21|25) ;; *) return 0 ;; esac
+    case "${RUNCLIENT_AWT_WAYLAND:-auto}" in 0|false) return 0 ;; esac
+    case "${JAVA_TOOL_OPTIONS:-} ${_JAVA_OPTIONS:-}" in
+        *-Dawt.toolkit.name=*) return 0 ;;
+    esac
+
+    local wayland_socket="${WAYLAND_DISPLAY:-}"
+    [ -n "$wayland_socket" ] || return 0
+    if [[ "$wayland_socket" != /* ]]; then
+        [ -n "${XDG_RUNTIME_DIR:-}" ] || return 0
+        wayland_socket="$XDG_RUNTIME_DIR/$wayland_socket"
+    fi
+    [ -S "$wayland_socket" ] || return 0
+
+    if [ -n "${DISPLAY:-}" ]; then
+        # Probe the connection, including authorization, without hanging on a
+        # stale or remote display. If probing tools are absent, leave it alone.
+        command -v timeout >/dev/null 2>&1 || return 0
+        command -v xdpyinfo >/dev/null 2>&1 || return 0
+        if timeout 2 xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    printf '%s\n' '-Dawt.toolkit.name=WLToolkit'
+}
+
 recover_hyprland_environment() {
     local user_id default_runtime_dir runtime_dir hypr_root
     local instance_dir candidate lock_file wayland_display

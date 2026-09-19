@@ -21,6 +21,13 @@ Run Client also has a `Cached Gradle config (offline)` mode. It passes
 `--offline --configuration-cache`, avoiding network checks for remote Gradle scripts and dependencies
 that are already cached. The mode fails if the build needs an artifact that has not been cached yet.
 
+For Java 21/25 clients on Wayland, Run Client checks X11 with `xdpyinfo` and
+`timeout`. If X11 is unavailable, it selects JetBrains Runtime's native Wayland
+toolkit for Swing windows, avoiding dependency-loader startup crashes. This
+requires a JetBrains runtime with Wayland support. Set `RUNCLIENT_AWT_WAYLAND=0`
+to disable the workaround; an explicit `awt.toolkit.name` in `JAVA_TOOL_OPTIONS`
+or `_JAVA_OPTIONS` also takes precedence.
+
 From a mod's Git checkout, select **Deploy GitHub Secrets + Variables** to create or
 update GitHub Actions settings on its GitHub `origin` repository. This requires
 GitHub CLI (`gh`) and permission to manage the repository's Actions secrets and

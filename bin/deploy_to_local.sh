@@ -13,8 +13,11 @@ if [[ -f "$ENV_FILE" ]]; then
     set +a
 fi
 
-DEFAULT_LOCAL_PATHS="/Users/jack/Library/Application Support/FjordLauncher/instances/Fent Server/minecraft/mods;/Users/jack/Library/Application Support/FjordLauncher/instances/Fent Server 2/minecraft/mods"
-LOCAL_PATHS="${DEPLOY_LOCAL_PATHS:-$DEFAULT_LOCAL_PATHS}"
+LOCAL_PATHS="${DEPLOY_LOCAL_PATHS:-}"
+if [[ -z "${LOCAL_PATHS//[[:space:];]/}" ]]; then
+    echo -e "${RED}ERROR: set DEPLOY_LOCAL_PATHS in .env to your mods directories (separated by semicolons).${NC}" >&2
+    exit 1
+fi
 
 GRADLE_PROPS="$PROJECT_DIR/gradle.properties"
 if [[ ! -f "$GRADLE_PROPS" ]]; then

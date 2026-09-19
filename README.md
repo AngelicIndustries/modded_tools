@@ -64,6 +64,15 @@ updates remain applied; rerun the entry after fixing the error.
 
 All credentials and settings go in `.env`. See `.env.example` for available options.
 
+For local deployment, set `DEPLOY_LOCAL_PATHS` to your mods directories, separated
+by semicolons (for example, `DEPLOY_LOCAL_PATHS="/path/to/instance/minecraft/mods"`).
+There are no machine-specific default destinations.
+
+Keep credentials and personal paths in the ignored `.env` file. Only the blank
+`.env.example` template belongs in Git. Local environment variants, credential
+files, caches, and editor/agent settings are also ignored. Ignore rules do not
+remove files or values already committed to Git history.
+
 ## Deobfuscate a Minecraft 1.7.10 mod
 
 ```sh

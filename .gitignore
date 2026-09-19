@@ -1,4 +1,22 @@
 venv/
+.venv/
 cache/
 .env
+.env.*
+!.env.example
 __pycache__/
+.pytest_cache/
+
+# Local editor/agent settings can contain machine paths and command history.
+.claude/
+.codex/
+.idea/
+.vscode/
+
+# Local credential files.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519

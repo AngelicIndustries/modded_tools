@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime
 import json
 import os
 import re
 import socket
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -59,9 +61,7 @@ CURSE_MAVEN_BASES = [
     "https://www.cursemaven.com/curse/maven",
 ]
 
-MODRINTH_MAVEN_BASES = [
-    "https://api.modrinth.com/maven",
-]
+MODRINTH_API = "https://api.modrinth.com/v2"
 
 PROJECT_REPOSITORY_FILES = [
     "repositories.gradle",
@@ -197,7 +197,9 @@ def parse_coordinate(literal_value: str) -> Optional[Tuple[str, str, str, Tuple[
         return None
     if not COORD_TOKEN_RE.match(artifact):
         return None
-    if not COORD_TOKEN_RE.match(version):
+    # Modrinth also accepts Maven filters such as 3.0.9-fabric,1.20.2.
+    version_tokens = version.split(",") if group == "maven.modrinth" else [version]
+    if not all(COORD_TOKEN_RE.fullmatch(token) for token in version_tokens):
         return None
     for extra in extras:
         if not extra or not COORD_TOKEN_RE.match(extra):
@@ -333,9 +335,6 @@ def metadata_urls(group: str, artifact: str, extra_repos: Optional[List[str]] = 
     if group == "curse.maven":
         return [f"{base.rstrip('/')}/{artifact}/maven-metadata.xml" for base in CURSE_MAVEN_BASES]
 
-    if group == "maven.modrinth":
-        return [f"{base.rstrip('/')}/{group.replace('.', '/')}/{artifact}/maven-metadata.xml" for base in MODRINTH_MAVEN_BASES]
-
     if extra_repos is None:
         extra_repos = environment_extra_maven_repositories()
 
@@ -415,6 +414,116 @@ def compare_with_known_order(current: str, candidate: str, versions: List[str]) 
     return -1
 
 
+def project_minecraft_version(deps_file: str) -> Optional[str]:
+    properties = os.path.join(os.path.dirname(os.path.abspath(deps_file)), "gradle.properties")
+    try:
+        with open(properties, encoding="utf-8") as handle:
+            content = handle.read()
+    except OSError:
+        return None
+    match = re.search(
+        r"^\s*(?:minecraftVersion|minecraft_version|mcVersion)\s*[=:]\s*([A-Za-z0-9_.+\-]+)\s*$",
+        content, re.MULTILINE,
+    )
+    return match.group(1) if match else None
+
+
+def fetch_modrinth_versions(url: str, timeout_seconds: float) -> List[dict]:
+    request = urllib.request.Request(url, headers={"User-Agent": "ModdedTools-DependencyChecker/1.0"})
+    try:
+        with prefer_ipv4_resolution():
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                versions = json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise ValueError("Modrinth API unavailable or returned invalid JSON") from error
+    if not isinstance(versions, list):
+        raise ValueError("Invalid Modrinth version list")
+    for version in versions:
+        if not isinstance(version, dict):
+            raise ValueError("Invalid Modrinth version metadata")
+        for field in ("id", "version_number", "date_published", "version_type"):
+            if not isinstance(version.get(field), str) or not version[field]:
+                raise ValueError(f"Missing Modrinth {field}")
+        if not COORD_TOKEN_RE.fullmatch(version["id"]):
+            raise ValueError("Invalid Modrinth version ID")
+        for field in ("loaders", "game_versions"):
+            values = version.get(field)
+            if not isinstance(values, list) or not values or not all(isinstance(v, str) and v for v in values):
+                raise ValueError(f"Missing Modrinth {field}")
+        try:
+            published = datetime.fromisoformat(version["date_published"].replace("Z", "+00:00"))
+            if published.tzinfo is None:
+                raise ValueError("Missing timezone")
+        except ValueError as error:
+            raise ValueError("Invalid Modrinth publication date") from error
+    return versions
+
+
+def find_modrinth_update(
+    artifact: str, current: str, minecraft_version: Optional[str], timeout_seconds: float,
+    project_cache: Dict[str, List[dict]],
+) -> Optional[dict]:
+    base_url = f"{MODRINTH_API}/project/{urllib.parse.quote(artifact, safe='')}/version"
+    if artifact not in project_cache:
+        project_cache[artifact] = fetch_modrinth_versions(base_url + "?include_changelog=false", timeout_seconds)
+    versions = project_cache[artifact]
+
+    # Resolve against metadata, not guesses about words/digits in version names.
+    matches = [(v, []) for v in versions if current == v["id"]]
+    if not matches:
+        matches = [(v, []) for v in versions if current == v["version_number"]]
+    if not matches:
+        for version in versions:
+            prefix = version["version_number"] + "-"
+            if current.startswith(prefix):
+                filters = current[len(prefix):].split(",")
+                if set(filters) <= set(version["loaders"] + version["game_versions"]):
+                    matches.append((version, filters))
+    if minecraft_version:
+        matches = [(v, f) for v, f in matches if minecraft_version in v["game_versions"]]
+    if len(matches) != 1:
+        raise ValueError("current version is unknown, ambiguous, or incompatible with the project's Minecraft version")
+    installed, filters = matches[0]
+    loaders = [f for f in filters if f in installed["loaders"]] or installed["loaders"]
+    games = ([minecraft_version] if minecraft_version else
+             [f for f in filters if f in installed["game_versions"]] or installed["game_versions"])
+    channels = {"release": 0, "beta": 1, "alpha": 2}
+    if installed["version_type"] not in channels:
+        raise ValueError("unknown current Modrinth release channel")
+    query = urllib.parse.urlencode({
+        "loaders": json.dumps(loaders), "game_versions": json.dumps(games), "include_changelog": "false",
+    })
+    source_url = base_url + "?" + query
+    filtered = fetch_modrinth_versions(source_url, timeout_seconds)
+    def published(version: dict) -> datetime:
+        return datetime.fromisoformat(version["date_published"].replace("Z", "+00:00"))
+
+    # API filters match any supplied value. Without a single project target,
+    # preserve ALL compatibility of the installed file instead of narrowing it.
+    eligible = [
+        v for v in filtered
+        if set(loaders) <= set(v["loaders"]) and set(games) <= set(v["game_versions"])
+        and channels.get(v["version_type"], 99) <= channels[installed["version_type"]]
+        and not is_pre_suffix_version(v["version_number"])
+        and published(v) > published(installed)
+    ]
+    if not eligible:
+        return None
+    latest = max(eligible, key=published)
+    number = latest["version_number"]
+    # Duplicate numbers can resolve to a different loader in Maven. Pin the
+    # unique version ID in that case, and preserve existing ID-based pins.
+    use_id = (current == installed["id"] or
+              sum(v["version_number"] == number for v in versions) != 1 or
+              not COORD_TOKEN_RE.fullmatch(number))
+    return {
+        "latest_version": latest["id"] if use_id else number,
+        "version_label": number,
+        "source_url": source_url,
+        "compatibility": f"Minecraft {', '.join(games)}; {', '.join(loaders)}",
+    }
+
+
 def scan_dependencies(
     deps_file: str,
     timeout_seconds: float,
@@ -464,6 +573,9 @@ def scan_dependencies(
         offset += len(line)
 
     cache: Dict[Tuple[str, str], Tuple[Optional[str], Optional[str], List[str]]] = {}
+    modrinth_projects: Dict[str, List[dict]] = {}
+    modrinth_cache: Dict[Tuple[str, str], Optional[dict]] = {}
+    minecraft_version = project_minecraft_version(deps_file)
     candidates: List[Dict[str, object]] = []
     next_id = 0
 
@@ -475,7 +587,7 @@ def scan_dependencies(
         current_version = entry["current_version"]
         extras: List[str] = entry["extras"]
         cache_key = (group, artifact)
-        is_best_effort = group in {"curse.maven", "maven.modrinth"}
+        is_best_effort = group == "curse.maven"
 
         if progress_callback is not None:
             progress_callback(
@@ -485,17 +597,29 @@ def scan_dependencies(
                 current_version,
             )
 
-        if cache_key not in cache:
-            urls = metadata_urls(group, artifact, extra_repos)
-            cache[cache_key] = fetch_latest_from_metadata(urls, timeout_seconds)
-
-        latest_version, source_url, versions = cache[cache_key]
-        if not latest_version:
-            continue
-
-        relation = compare_with_known_order(current_version, latest_version, versions)
-        if relation <= 0:
-            continue
+        modrinth_info = {}
+        if group == "maven.modrinth":
+            modrinth_key = (artifact, current_version)
+            if modrinth_key not in modrinth_cache:
+                try:
+                    modrinth_cache[modrinth_key] = find_modrinth_update(
+                        artifact, current_version, minecraft_version, timeout_seconds, modrinth_projects,
+                    )
+                except ValueError as error:
+                    print(f"Skipping {group}:{artifact}:{current_version}: {error}.", file=sys.stderr)
+                    modrinth_cache[modrinth_key] = None
+            modrinth_info = modrinth_cache[modrinth_key]
+            if not modrinth_info:
+                continue
+            latest_version = modrinth_info["latest_version"]
+            source_url = modrinth_info["source_url"]
+        else:
+            if cache_key not in cache:
+                urls = metadata_urls(group, artifact, extra_repos)
+                cache[cache_key] = fetch_latest_from_metadata(urls, timeout_seconds)
+            latest_version, source_url, versions = cache[cache_key]
+            if not latest_version or compare_with_known_order(current_version, latest_version, versions) <= 0:
+                continue
 
         new_parts = [group, artifact, latest_version, *extras]
         new_literal = ":".join(new_parts)
@@ -511,6 +635,7 @@ def scan_dependencies(
                 "best_effort": is_best_effort,
                 "new_literal": new_literal,
                 "occurrences": entry["occurrences"],
+                **modrinth_info,
             }
         )
         next_id += 1
@@ -542,14 +667,21 @@ def cmd_scan(args: argparse.Namespace) -> int:
     for candidate in candidates:
         key = f"{candidate['group']}:{candidate['artifact']}"
         occurrence_count = len(candidate["occurrences"])
+        latest = candidate["latest_version"]
+        label = candidate.get("version_label", latest)
+        if label != latest:
+            latest = f"{label} (ID: {latest})"
+        # Version labels come from remote metadata; keep the line protocol intact.
+        latest = latest.replace("|", "/").replace("\n", " ").replace("\r", " ")
         print(
-            "CANDIDATE|{id}|{key}|{current}|{latest}|{count}|{best_effort}".format(
+            "CANDIDATE|{id}|{key}|{current}|{latest}|{count}|{best_effort}|{compatibility}".format(
                 id=candidate["id"],
                 key=key,
                 current=candidate["current_version"],
-                latest=candidate["latest_version"],
+                latest=latest,
                 count=occurrence_count,
                 best_effort="1" if candidate.get("best_effort") else "0",
+                compatibility=candidate.get("compatibility", ""),
             )
         )
     return 0

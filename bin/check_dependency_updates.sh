@@ -74,14 +74,17 @@ for line in "${scan_lines[@]}"; do
     [[ "$line" == CANDIDATE\|* ]] || continue
     found_candidates=1
 
-    IFS='|' read -r _ candidate_id ga current_version latest_version occurrence_count best_effort <<< "$line"
+    IFS='|' read -r _ candidate_id ga current_version latest_version occurrence_count best_effort compatibility <<< "$line"
     echo
     echo -e "${CYAN}${ga}${NC}"
     echo "Current: $current_version"
     echo "Latest:  $latest_version"
     echo "Occurrences in file: $occurrence_count"
+    if [ -n "$compatibility" ]; then
+        echo "Compatibility: $compatibility (Modrinth API)"
+    fi
     if [ "$best_effort" = "1" ]; then
-        echo -e "${YELLOW}Source type: best-effort metadata (Curse/Modrinth style repository)${NC}"
+        echo -e "${YELLOW}Source type: best-effort metadata (Curse repository)${NC}"
     fi
     if prompt_yes_no_update "Update this dependency?"; then
         selected_ids+=("$candidate_id")

@@ -17,6 +17,19 @@ cp .env.example .env  # fill in your credentials
 
 Select from: build, run client/server (with optional debug), apply Spotless, manage lang files, publish to Maven, update CurseForge/Modrinth readmes, and more.
 
+The dependency checker uses Modrinth's version API with Minecraft-version and
+loader filters for `maven.modrinth` dependencies. It reads `minecraftVersion`
+(`minecraft_version` or `mcVersion` also work) from the adjacent `gradle.properties`
+and gets the loader from the installed version's metadata. Without a project
+Minecraft version, updates must retain all game versions supported by the current
+file; all current loaders are retained too. Stable releases stay on releases,
+beta versions can update to beta or release, and alpha versions can use any channel.
+Only later publication dates count as updates. Unknown or ambiguous current
+versions and API failures are reported and skipped without unfiltered Maven fallback.
+Modrinth version IDs and Maven filter suffixes such as `1.0-forge,1.7.10` are
+supported. If a proposed version number is shared by multiple files, the update
+uses its unique version ID to avoid resolving the wrong loader in Maven.
+
 Run Client also has a `Cached Gradle config (offline)` mode. It passes
 `--offline --configuration-cache`, avoiding network checks for remote Gradle scripts and dependencies
 that are already cached. The mode fails if the build needs an artifact that has not been cached yet.

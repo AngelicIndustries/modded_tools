@@ -63,7 +63,7 @@ CURSE_MAVEN_BASES = [
 ]
 
 MODRINTH_API = "https://api.modrinth.com/v2"
-FENT_GITHUB_MAVEN_BASE = "https://maven.fentanylsolutions.org/github/"
+ANGELIC_GITHUB_MAVEN_BASE = "https://maven.angelic.industries/github/"
 GITHUB_STABLE_CLASSIFIERS = ("dev", "sources", "javadoc")
 
 PROJECT_REPOSITORY_FILES = [
@@ -417,8 +417,8 @@ def compare_with_known_order(current: str, candidate: str, versions: List[str]) 
     return -1
 
 
-def is_fent_github_source(source_url: Optional[str]) -> bool:
-    return bool(source_url and source_url.startswith(FENT_GITHUB_MAVEN_BASE))
+def is_angelic_github_source(source_url: Optional[str]) -> bool:
+    return bool(source_url and source_url.startswith(ANGELIC_GITHUB_MAVEN_BASE))
 
 
 def stable_github_classifiers(artifact: str, current: str, extras: List[str]) -> List[str]:
@@ -440,7 +440,7 @@ def stable_github_classifiers(artifact: str, current: str, extras: List[str]) ->
 def github_artifact_url(source_url: str, group: str, artifact: str, version: str, extras: List[str]) -> str:
     if len(extras) > 1 or not all(COORD_TOKEN_RE.fullmatch(v) for v in [group, artifact, version, *extras]):
         raise ValueError("unsupported GitHub Maven artifact coordinate")
-    directory = FENT_GITHUB_MAVEN_BASE + group.replace(".", "/") + "/" + artifact + "/"
+    directory = ANGELIC_GITHUB_MAVEN_BASE + group.replace(".", "/") + "/" + artifact + "/"
     if source_url != directory + "maven-metadata.xml":
         raise ValueError("GitHub Maven metadata source does not match the dependency")
     classifier = "-" + extras[0] if extras else ""
@@ -679,7 +679,7 @@ def scan_dependencies(
                 continue
 
         github_info = {}
-        if is_fent_github_source(source_url):
+        if is_angelic_github_source(source_url):
             try:
                 new_extras = stable_github_classifiers(artifact, current_version, extras)
                 artifact_url = github_artifact_url(source_url, group, artifact, latest_version, new_extras)
@@ -790,7 +790,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if candidate_id not in selected_ids:
             continue
         new_literal = candidate["new_literal"]
-        if is_fent_github_source(candidate.get("source_url")):
+        if is_angelic_github_source(candidate.get("source_url")):
             try:
                 parsed = parse_coordinate(new_literal)
                 if parsed is None:

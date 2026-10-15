@@ -30,7 +30,7 @@ Modrinth version IDs and Maven filter suffixes such as `1.0-forge,1.7.10` are
 supported. If a proposed version number is shared by multiple files, the update
 uses its unique version ID to avoid resolving the wrong loader in Maven.
 
-For dependencies resolved through `https://maven.fentanylsolutions.org/github/`,
+For dependencies resolved through `https://maven.angelic.industries/github/`,
 the checker migrates filename classifiers of the form `<artifact>-<current version>-dev`,
 `-sources`, or `-javadoc` to the corresponding stable selector. Matching is case
 insensitive and an optional `.jar` suffix is supported. Existing `dev`, `sources`,
@@ -122,7 +122,7 @@ and invalidated JAR signatures and manifest digests are removed.
 
 Dependencies are pinned with SHA-256 checks and cached in `cache/deobf-1.7.10/`;
 verified artifacts already in Gradle's cache are reused. Forge's Maven is tried
-first, with the Fent Maven mirror as fallback. Subsequent runs work offline.
+first, with the Angelic Maven mirror as fallback. Subsequent runs work offline.
 Use `--cache-dir DIR` to change the cache location or `--mappings-dir DIR` to use
 your project's `methods.csv` and `fields.csv` (for example, when it disables RFG's
 Forge embedded mappings). `--deobf-1.7.10` is an alias for `--deobf`.

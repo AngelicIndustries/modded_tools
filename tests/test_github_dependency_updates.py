@@ -25,8 +25,8 @@ class ArtifactResponse(io.BytesIO):
 
 
 class GitHubDependencyUpdateTests(unittest.TestCase):
-    SOURCE = "https://maven.fentanylsolutions.org/github/jss2a98aj/BugTorch/maven-metadata.xml"
-    ARTIFACT_BASE = "https://maven.fentanylsolutions.org/github/jss2a98aj/BugTorch/1.3.1/BugTorch-1.3.1"
+    SOURCE = "https://maven.angelic.industries/github/jss2a98aj/BugTorch/maven-metadata.xml"
+    ARTIFACT_BASE = "https://maven.angelic.industries/github/jss2a98aj/BugTorch/1.3.1/BugTorch-1.3.1"
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -36,7 +36,7 @@ class GitHubDependencyUpdateTests(unittest.TestCase):
         self.state_file = self.root / "state.json"
         self.write_deps("bugtorch-1.2.15-dev")
         (self.root / "repositories.gradle").write_text(
-            'repositories { maven { url = "https://maven.fentanylsolutions.org/github/" } }\n'
+            'repositories { maven { url = "https://maven.angelic.industries/github/" } }\n'
         )
         metadata = mock.patch.object(
             checker, "fetch_latest_from_metadata",
@@ -169,8 +169,8 @@ class GitHubDependencyUpdateTests(unittest.TestCase):
         self.assertIn("UPDATED|1|1|", output)
 
     def test_other_repository_does_not_migrate_or_verify_classifiers(self):
-        for source in ("https://maven.fentanylsolutions.org/releases/", "https://example.invalid/github/",
-                       "https://maven.fentanylsolutions.org/github-other/"):
+        for source in ("https://maven.angelic.industries/releases/", "https://example.invalid/github/",
+                       "https://maven.angelic.industries/github-other/"):
             with self.subTest(source=source):
                 self.metadata.return_value = ("1.3.1", source + "jss2a98aj/BugTorch/maven-metadata.xml", ["1.2.15", "1.3.1"])
                 with mock.patch.object(checker.urllib.request, "urlopen") as http:

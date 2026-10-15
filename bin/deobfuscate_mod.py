@@ -72,7 +72,7 @@ def load_mappings(cache: Path, mappings_dir: Path | None) -> dict[str, str]:
     else:
         forge = dependency(cache, FORGE_NAME, FORGE_SHA256, [
             f"https://maven.minecraftforge.net/{FORGE_PATH}",
-            f"https://maven.fentanylsolutions.org/releases/{FORGE_PATH}",
+            f"https://maven.angelic.industries/releases/{FORGE_PATH}",
         ], "net.minecraftforge/forge", FORGE_VERSION)
         with zipfile.ZipFile(forge) as archive:
             csv_data = [archive.read(f"conf/{name}").decode("utf-8-sig")

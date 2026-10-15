@@ -3,7 +3,7 @@
 Update 67Minecraft project description from transform_readme.py output.
 
 67Minecraft is a custom Modrinth instance hosted at
-https://67.fentanylsolutions.org/.
+https://67minecraft.com/.
 
 Usage:
     python update_67minecraft.py
@@ -24,7 +24,7 @@ from pathlib import Path
 import requests
 
 
-API_BASE = "https://67.fentanylsolutions.org/api/v2"
+API_BASE = "https://67minecraft.com/api/v2"
 GRADLE_PROP = "67minecraftProjectId"
 ENV_TOKEN_KEY = "MINECRAFT67_TOKEN"
 
@@ -155,7 +155,7 @@ Requires {ENV_TOKEN_KEY} in .env file in the ModdedTools directory.
     if not token and not args.dry_run:
         print(f"Error: {ENV_TOKEN_KEY} not found in .env file or environment", file=sys.stderr)
         print(f"Create a .env file with: {ENV_TOKEN_KEY}=your_token_here", file=sys.stderr)
-        print("Get your token from: https://67.fentanylsolutions.org/settings/pats", file=sys.stderr)
+        print("Get your token from: https://67minecraft.com/settings/pats", file=sys.stderr)
         sys.exit(1)
 
     # Get project ID from args or gradle.properties

@@ -154,7 +154,7 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
             """
             repositories {
                 // url = "https://ignored.example/releases"
-                maven { url = "https://maven.fentanylsolutions.org/releases/" }
+                maven { url = "https://maven.angelic.industries/releases/" }
                 maven { url = uri("https://mvn.falsepattern.com/releases/") }
                 maven { url "https://mvn.ventooth.com/releases/" }
             }
@@ -164,7 +164,7 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
         self.assertEqual(
             urls,
             [
-                "https://maven.fentanylsolutions.org/releases",
+                "https://maven.angelic.industries/releases",
                 "https://mvn.falsepattern.com/releases",
                 "https://mvn.ventooth.com/releases",
             ],
@@ -183,8 +183,8 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
             """
             repositories {
                 maven {
-                    name = "Fent Maven"
-                    url = "https://maven.fentanylsolutions.org/releases"
+                    name = "Angelic Maven"
+                    url = "https://maven.angelic.industries/releases"
                 }
             }
             """,
@@ -196,7 +196,7 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
             captured_urls.extend(urls)
             return (
                 "1.0.16",
-                "https://maven.fentanylsolutions.org/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
+                "https://maven.angelic.industries/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
                 ["e023b1a-snapshot", "1.0.16"],
             )
 
@@ -204,7 +204,7 @@ class DependencyUpdateCheckerTests(unittest.TestCase):
             state = checker.scan_dependencies(str(deps_file), timeout_seconds=0.01)
 
         self.assertIn(
-            "https://maven.fentanylsolutions.org/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
+            "https://maven.angelic.industries/releases/org/fentanylsolutions/tabfaces/TabFaces/maven-metadata.xml",
             captured_urls,
         )
         self.assertEqual(len(state["candidates"]), 1)
